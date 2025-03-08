@@ -13,9 +13,7 @@ exports.handler = async (event: SQSEvent) => {
   const recs = event.Records;
   for(let i = 0; i < recs.length; i++) {
     const rec = recs[i];
-
-    console.debug(rec.body);
-    svc.persistError(rec.body);
+    svc.persistError(rec);
 
   }
   console.info('Exiting handler');

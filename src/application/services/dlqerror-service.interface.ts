@@ -1,3 +1,5 @@
+import {SQSRecord} from "aws-lambda";
+
 export interface IDlqErrorService {
-  persistError(error: any): any;
+  persistError(error: SQSRecord): any;
 }
