@@ -37,20 +37,55 @@ Parameters:
 
 Resources:
 
+  DynamoDbStreamEventPipeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - pipes.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: SourcePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "dynamodb:DescribeStream"
+                  - "dynamodb:GetRecords"
+                  - "dynamodb:GetShardIterator"
+                  - "dynamodb:ListStreams"
+                  - "sqs:SendMessage"
+                Resource:
+                  - !GetAtt DlqErrorTable.StreamArn
+        - PolicyName: TargetPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !GetAtt SaveDlqErrorCountFunction.Arn
+
   DlqErrorTable:
     Type: AWS::DynamoDB::Table
     #    DeletionPolicy: Retain
     #    UpdateReplacePolicy: Retain
     Properties:
       AttributeDefinitions:
-        - AttributeName: "MessageId"
+        - AttributeName: "messageId"
           AttributeType: "S"
-        - AttributeName: "QueueName"
+        - AttributeName: "dlqName"
           AttributeType: "S"
       KeySchema:
-        - AttributeName: "MessageId"
+        - AttributeName: "messageId"
           KeyType: "HASH"
-        - AttributeName: "QueueName"
+        - AttributeName: "dlqName"
           KeyType: "RANGE"
       BillingMode: PAY_PER_REQUEST
       #      ProvisionedThroughput:
@@ -58,6 +93,43 @@ Resources:
       #        WriteCapacityUnits: 1
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: false
+      StreamSpecification:
+        StreamViewType: KEYS_ONLY
+
+  DlqErrorCountTable:
+    Type: AWS::DynamoDB::Table
+    #    DeletionPolicy: Retain
+    #    UpdateReplacePolicy: Retain
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: "dlqName"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "dlqName"
+          KeyType: "HASH"
+      BillingMode: PAY_PER_REQUEST
+      #      ProvisionedThroughput:
+      #        ReadCapacityUnits: 1
+      #        WriteCapacityUnits: 1
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+
+  DynamoDbStreamEventPipe:
+    Type: AWS::Pipes::Pipe
+    Properties:
+      Description: "Pipe to connect DDB stream to lambda"
+      RoleArn: !GetAtt DynamoDbStreamEventPipeRole.Arn
+      Source: !GetAtt DlqErrorTable.StreamArn
+      SourceParameters:
+        DynamoDBStreamParameters:
+          StartingPosition: LATEST
+          BatchSize: 10
+          MaximumBatchingWindowInSeconds: 300
+          MaximumRetryAttempts: 3
+      Target: !GetAtt SaveDlqErrorCountFunction.Arn
+      TargetParameters:
+        LambdaFunctionParameters:
+          InvocationType: FIRE_AND_FORGET
 
   LambdaExecutionRole:
     Type: AWS::IAM::Role
@@ -118,6 +190,9 @@ Resources:
         ApplicationLogLevel: !Ref AppLoggingLevel
         SystemLogLevel: !Ref SystemLogLevel
       Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          DLQ_ERROR_TABLE_NAME: !Ref DlqErrorTable
     Metadata: # Manage esbuild properties
       BuildMethod: esbuild
       BuildProperties:
@@ -142,6 +217,40 @@ Resources:
         Fn::ImportValue: !Sub ${TbsAppReportsCFStackName}:UserOrderUpsertedEventDLQ:Arn
       FunctionName: !Ref PersistDlqErrorFunction
 
+  SaveDlqErrorCountFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: index.handler
+      Runtime: nodejs22.x
+      MemorySize: 512
+      Timeout: 10
+      Description: Persist error details from DLQs to DynamoDB
+      Tracing: Active
+      ReservedConcurrentExecutions: !Sub ${PersistErrorReservedConcurrency}
+      LoggingConfig:
+        LogGroup: !Ref SaveDlqErrorCountFunctionLogs
+        LogFormat: JSON
+        ApplicationLogLevel: !Ref AppLoggingLevel
+        SystemLogLevel: !Ref SystemLogLevel
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          DLQ_ERROR_COUNT_TABLE_NAME: !Ref DlqErrorCountTable
+    Metadata: # Manage esbuild properties
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Target: "es2020"
+        Sourcemap: true
+        EntryPoints:
+          - src/application/event-handlers/save-lambdadlq-errorcount/index.ts
+
+  SaveDlqErrorCountFunctionLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-SaveDlqErrorCountFunction"
+      RetentionInDays: 30
 Outputs:
 
   DlqErrorTableName:

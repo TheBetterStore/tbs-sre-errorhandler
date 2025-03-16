@@ -42,6 +42,18 @@ export class DynamoDBClient implements IDynamoDBClient {
   }
 
   /**
+   * update
+   * @param {DocumentClient.UpdateItemInput} params
+   * @returns {Promise<DocumentClient.UpdateItemOutput>}
+   */
+  async update(params: DocumentClient.UpdateItemInput): Promise<DocumentClient.UpdateItemOutput> {
+    console.debug('Updating item in DynamoDB', params);
+    const res = docClient.update(params).promise();
+    console.debug('Returning...');
+    return res;
+  }
+
+  /**
    * query
    * @param {QueryInput} params
    */
