@@ -1,6 +1,6 @@
 import {IDlqErrorService} from "./dlqerror-service.interface";
 import {SQSRecord} from "aws-lambda";
-import {DocumentClient} from "aws-sdk/clients/dynamodb";
+import {DocumentClient, ScanOutput} from "aws-sdk/clients/dynamodb";
 import {inject, injectable} from "inversify";
 import {IDynamoDBClient} from "../../infrastructure/interfaces/dynamodb-client.interface";
 import TYPES from "../../infrastructure/types";
@@ -70,5 +70,15 @@ export class DlqErrorService implements IDlqErrorService {
       const res = await this.ddbClient.update(params);
       console.log(res);
     }
+  }
+
+  async getErrorCounts(): Promise<ScanOutput> {
+    console.info('Entered getErrorCounts');
+    const params: DocumentClient.ScanInput = {
+      TableName: this.dlqErrorCountTableName,
+    };
+    const res = await this.ddbClient.scan(params);
+    console.log(res);
+    return res;
   }
 }

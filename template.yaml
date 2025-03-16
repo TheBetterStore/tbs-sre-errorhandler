@@ -10,7 +10,10 @@ Parameters:
     Type: String
     Default: prod
 
-  InfraBaseCFName:
+  LoginCFStackName:
+    Type: String
+
+  Route53AppDomainName:
     Type: String
 
   SecKmsKeysCFName:
@@ -165,8 +168,11 @@ Resources:
               - Effect: Allow
                 Action:
                   - "dynamodb:Put*"
+                  - "dynamodb:Scan*"
+                  - "dynamodb:Update*"
                 Resource:
                   - !GetAtt DlqErrorTable.Arn
+                  - !GetAtt DlqErrorCountTable.Arn
               - Effect: Allow
                 Action: kms:Decrypt
                 Resource:
@@ -251,6 +257,195 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-SaveDlqErrorCountFunction"
       RetentionInDays: 30
+
+  GetDlqErrorCountsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: index.handler
+      Runtime: nodejs22.x
+      MemorySize: 512
+      Timeout: 10
+      Description: Get error counts from DynamoDB
+      Tracing: Active
+      ReservedConcurrentExecutions: !Sub ${PersistErrorReservedConcurrency}
+      LoggingConfig:
+        LogGroup: !Ref GetDlqErrorCountsFunctionLogs
+        LogFormat: JSON
+        ApplicationLogLevel: !Ref AppLoggingLevel
+        SystemLogLevel: !Ref SystemLogLevel
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          DLQ_ERROR_COUNT_TABLE_NAME: !Ref DlqErrorCountTable
+    Metadata: # Manage esbuild properties
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Target: "es2020"
+        Sourcemap: true
+        EntryPoints:
+          - src/application/command-handlers/get-lambdadlq-errorcounts/index.ts
+
+  GetDlqErrorCountsFunctionLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-GetDlqErrorCountsFunction"
+      RetentionInDays: 30
+
+  CWLogGroupApiGwAccessLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ["", ["API-Gateway-Access-Logs_", !Sub "${AWS::StackName}"]]
+      RetentionInDays: 365
+
+  GetDlqErrorCountsFunctionApiGatewayInvoke:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !Ref "GetDlqErrorCountsFunction"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SreErrorApi}/*"
+      SourceAccount: !Sub ${AWS::AccountId}
+
+  SreErrorApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      EndpointConfiguration: REGIONAL
+      MinimumCompressionSize: 0
+      TracingEnabled: true
+      DisableExecuteApiEndpoint: true
+      OpenApiVersion: 3.0.1
+      AccessLogSetting:
+        DestinationArn: !GetAtt CWLogGroupApiGwAccessLogs.Arn
+        Format: >
+          {"requestTimeEpoch": $context.requestTimeEpoch, "requestId":"$context.requestId",
+          "httpMethod": "$context.httpMethod", "path":"$context.path", "resourcePath": "$context.resourcePath",
+          "status": "$context.status",
+          "lambdaRequestId": "$context.integration.requestId", "integrationStatus": "$context.integration.status",
+          "xrayTraceId": "$context.xrayTraceId", "responseLatency": $context.responseLatency,
+          "integrationLatency": "$context.integrationLatency", "error": "$context.error.message",
+          "userAgent": "$context.identity.userAgent", "sourceIp": "$context.identity.sourceIp"}
+      MethodSettings:
+        - HttpMethod: "*"
+          ResourcePath: "/*"
+          DataTraceEnabled: false
+          MetricsEnabled: true # Enable detailed metrics (error 404, latence, ...)
+          ThrottlingRateLimit: 10
+          ThrottlingBurstLimit: 10
+          LoggingLevel: ERROR
+      DefinitionBody:
+        openapi: "3.0.1"
+        info:
+          title: !Sub "${AWS::StackName}-api"
+          version: "2021-06-10T02:04:23Z"
+        paths:
+          /dlqerrors/count:
+            get:
+              security:
+                - DevopsToolkitUser: [ ]
+              produces:
+                - "application/json"
+              responses:
+                "200":
+                  description: "200 response"
+                  headers:
+                    Strict-Transport-Security:
+                      schema:
+                        type: "string"
+                    Access-Control-Allow-Origin:
+                      schema:
+                        type: "string"
+                  content: { }
+              x-amazon-apigateway-integration:
+                httpMethod: "POST"
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetDlqErrorCountsFunction.Arn}/invocations"
+                responses:
+                  default:
+                    statusCode: "200"
+                    responseParameters:
+                      method.response.header.Strict-Transport-Security: "'max-age=31536000; includeSubdomains; preload'"
+                passthroughBehavior: "when_no_match"
+                contentHandling: "CONVERT_TO_TEXT"
+                type: "aws_proxy"
+            options:
+              consumes:
+                - "application/json"
+              produces:
+                - "application/json"
+              responses:
+                "200":
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
+                    Access-Control-Allow-Methods:
+                      type: "string"
+                    Access-Control-Allow-Headers:
+                      type: "string"
+                    Strict-Transport-Security:
+                      type: "string"
+                    X-Frame-Options:
+                      type: "string"
+                    Content-Security-Policy:
+                      type: "string"
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: "200"
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Methods: "'GET,POST,PATCH,PUT,DELETE,OPTIONS'"
+                      method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
+                      method.response.header.Strict-Transport-Security: "'max-age=31536000; includeSubdomains; preload'"
+                      method.response.header.X-Frame-Options: "'DENY'"
+                      method.response.header.Content-Security-Policy: "'default-src \"none\"; frame-ancestors \"none\"'"
+                requestTemplates:
+                  application/json: "{\"statusCode\": 200}"
+                passthroughBehavior: "when_no_match"
+                type: "mock"
+
+        securityDefinitions:
+          DevopsToolkitUser:
+            type: "apiKey"
+            name: "Authorization"
+            in: "header"
+            x-amazon-apigateway-authtype: "cognito_user_pools"
+            x-amazon-apigateway-authorizer:
+              providerARNs:
+                - Fn::ImportValue: !Sub ${LoginCFStackName}:UserPool:Arn
+              type: "cognito_user_pools"
+        x-amazon-apigateway-gateway-responses:
+          DEFAULT_5XX:
+            responseParameters:
+              gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+              gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+              gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              gatewayresponse.header.Access-Control-Max-Age: "'86400'"
+              gatewayresponse.header.Strict-Transport-Security: "'max-age=31536000; includeSubdomains; preload'"
+          DEFAULT_4XX:
+            responseParameters:
+              gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+              gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+              gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              gatewayresponse.header.Access-Control-Max-Age: "'86400'"
+              gatewayresponse.header.Strict-Transport-Security: "'max-age=31536000; includeSubdomains; preload'"
+        x-amazon-apigateway-minimum-compression-size: 0
+
+  ApiGwExecutionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub API-Gateway-Execution-Logs_${SreErrorApi}/Prod
+      RetentionInDays: 30
+
+  ApiBasePathMappingv2:
+    Type: AWS::ApiGatewayV2::ApiMapping
+    Properties:
+      DomainName: !Sub "api.${Route53AppDomainName}"
+      ApiId: !Ref SreErrorApi
+      Stage: !Ref SreErrorApi.Stage
+      ApiMappingKey: "toolkit-sre/v1"
+
 Outputs:
 
   DlqErrorTableName:
