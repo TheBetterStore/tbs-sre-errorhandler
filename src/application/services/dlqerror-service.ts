@@ -81,4 +81,17 @@ export class DlqErrorService implements IDlqErrorService {
     console.log(res);
     return res;
   }
+
+  async getErrors(dlqName: string): Promise<ScanOutput> {
+    console.info('Entered getErrorCounts');
+    const params: DocumentClient.ScanInput = {
+      TableName: this.dlqErrorTableName,
+      FilterExpression: 'dlqName = :dlqName',
+      ExpressionAttributeValues: {':dlqName': dlqName},
+      Select: 'ALL_ATTRIBUTES'
+    };
+    const res = await this.ddbClient.scan(params);
+    console.log(res);
+    return res;
+  }
 }

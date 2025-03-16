@@ -5,4 +5,5 @@ export interface IDlqErrorService {
   persistError(error: SQSRecord): any;
   persistErrorCounts(dlqCounts: any);
   getErrorCounts(): Promise<ScanOutput>;
+  getErrors(dlqName: string): Promise<ScanOutput>
 }
