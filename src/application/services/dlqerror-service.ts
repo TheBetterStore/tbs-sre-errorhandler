@@ -63,7 +63,7 @@ export class DlqErrorService implements IDlqErrorService {
       const params: DocumentClient.UpdateItemInput = {
         TableName: this.dlqErrorCountTableName,
         Key: {dlqName: dlqCounts[k]},
-        UpdateExpression: 'ADD ItemCount :val',
+        UpdateExpression: 'ADD itemCount :val',
         ExpressionAttributeValues: {val: dlqCounts[k].value},
         ReturnValues: 'UPDATED_NEW',
       };

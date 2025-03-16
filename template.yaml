@@ -38,6 +38,9 @@ Parameters:
     Type: String
     Default: tbs-app-reports-prod
 
+  AllowedCorsDomains:
+    Type: String
+
 Resources:
 
   DynamoDbStreamEventPipeRole:
@@ -199,6 +202,7 @@ Resources:
       Environment:
         Variables:
           DLQ_ERROR_TABLE_NAME: !Ref DlqErrorTable
+          ALLOWED_CORS_DOMAINS: !Ref AllowedCorsDomains
     Metadata: # Manage esbuild properties
       BuildMethod: esbuild
       BuildProperties:
@@ -243,6 +247,7 @@ Resources:
       Environment:
         Variables:
           DLQ_ERROR_COUNT_TABLE_NAME: !Ref DlqErrorCountTable
+          ALLOWED_CORS_DOMAINS: !Ref AllowedCorsDomains
     Metadata: # Manage esbuild properties
       BuildMethod: esbuild
       BuildProperties:
@@ -278,6 +283,7 @@ Resources:
       Environment:
         Variables:
           DLQ_ERROR_COUNT_TABLE_NAME: !Ref DlqErrorCountTable
+          ALLOWED_CORS_DOMAINS: !Ref AllowedCorsDomains
     Metadata: # Manage esbuild properties
       BuildMethod: esbuild
       BuildProperties:

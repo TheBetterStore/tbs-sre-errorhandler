@@ -6,13 +6,14 @@ STACK_NAME=$APP_NAME-$Environment
 
 sam build --cached
 
-sam deploy --template-file .aws-sam/build/template.yaml --stack-name $STACK_NAME \
---s3-bucket $DEPLOY_BUCKET --s3-prefix $APP_NAME \
---capabilities CAPABILITY_NAMED_IAM --region ap-southeast-2 --parameter-overrides Environment=$Environment \
-AppAdminCFName=tbs-app-admin-$Environment \
-AppLoginCFName=tbs-app-login-$Environment \
-InfraBaseCFName=tbs-infra-$Environment \
-VpcCFStackName=tbs-infra-vpc-$Environment \
+sam deploy --stack-name $stackName \
+--s3-bucket $samDeployBucket --s3-prefix sam/$appName \
+--capabilities CAPABILITY_NAMED_IAM --region $region \
+--parameter-overrides Environment=$environment \
+LoginCFStackName=tbs-devops-toolkit-login-$environment \
+Route53AppDomainName=$route53AppDomainName \
+AppLoggingLevel='DEBUG' \
+AllowedCorsDomains=$allowedCorsDomains \
 --no-fail-on-empty-changeset \
---tags Environment=$Environment StackName=$STACK_NAME TagProduct=$APP_NAME \
+--tags StackName=$stackName Environment=$environment Product=$appName \
 --profile thebetterstore
