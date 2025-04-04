@@ -22,6 +22,7 @@ Parameters:
 
   PersistErrorReservedConcurrency:
     Type: String
+    Description: Populated DDb from DLQs. Allow setting to 0 if too many!
     Default: 1
 
   AppLoggingLevel:
@@ -166,8 +167,7 @@ Resources:
                   - sqs:ChangeMessageVisibility
                   - sqs:DeleteMessage
                   - sqs:GetQueueAttributes
-                Resource:
-                  - Fn::ImportValue: !Sub ${TbsAppReportsCFStackName}:UserOrderUpsertedEventDLQ:Arn
+                Resource: !Sub "arn:aws:sqs:*:${AWS::AccountId}:*DLQ"
               - Effect: Allow
                 Action:
                   - "dynamodb:Put*"
@@ -219,13 +219,13 @@ Resources:
       RetentionInDays: 30
 
   # This list is expected to grow - how to make this dynamic for scale?
-  ReportsFunctionDlqEventSourceMapping:
-    Type: AWS::Lambda::EventSourceMapping
-    Properties:
-      BatchSize: 1
-      EventSourceArn:
-        Fn::ImportValue: !Sub ${TbsAppReportsCFStackName}:UserOrderUpsertedEventDLQ:Arn
-      FunctionName: !Ref PersistDlqErrorFunction
+#  ReportsFunctionDlqEventSourceMapping:
+#    Type: AWS::Lambda::EventSourceMapping
+#    Properties:
+#      BatchSize: 1
+#      EventSourceArn:
+#        Fn::ImportValue: !Sub ${TbsAppReportsCFStackName}:UserOrderUpsertedEventDLQ:Arn
+#      FunctionName: !Ref PersistDlqErrorFunction
 
   SaveDlqErrorCountFunction:
     Type: AWS::Serverless::Function
@@ -237,7 +237,7 @@ Resources:
       Timeout: 10
       Description: Persist error details from DLQs to DynamoDB
       Tracing: Active
-      ReservedConcurrentExecutions: !Sub ${PersistErrorReservedConcurrency}
+      ReservedConcurrentExecutions: 5
       LoggingConfig:
         LogGroup: !Ref SaveDlqErrorCountFunctionLogs
         LogFormat: JSON
@@ -273,7 +273,7 @@ Resources:
       Timeout: 10
       Description: Get error counts from DynamoDB
       Tracing: Active
-      ReservedConcurrentExecutions: !Sub ${PersistErrorReservedConcurrency}
+      ReservedConcurrentExecutions: 1
       LoggingConfig:
         LogGroup: !Ref GetDlqErrorCountsFunctionLogs
         LogFormat: JSON
@@ -574,3 +574,15 @@ Outputs:
     Value: !GetAtt DlqErrorTable.Arn
     Export:
       Name: !Sub '${AWS::StackName}:DlqErrorTable:Arn'
+
+  PersistDlqErrorFunctionName:
+    Description: DLQFunction for handling lambda DLQ errors
+    Value: !Ref PersistDlqErrorFunction
+    Export:
+      Name: !Sub '${AWS::StackName}:PersistDlqErrorFunction:Name'
+
+  PersistDlqErrorFunctionArn:
+    Description: DLQFunction for handling lambda DLQ errors
+    Value: !GetAtt PersistDlqErrorFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}:PersistDlqErrorFunction:Arn'
