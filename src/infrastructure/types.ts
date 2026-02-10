@@ -1,6 +1,8 @@
 const TYPES = {
   IDlqErrorService: Symbol('IDlqErrorService'),
-  IDynamoDBClient: Symbol('IDynamoDBClient'),
+  IAlarmService: Symbol('IAlarmService'),
+  IAwsDynamoDBClient: Symbol('IAwsDynamoDBClient'),
+  AlarmTableName: Symbol('AlarmTableName')
 };
 
 export default TYPES;

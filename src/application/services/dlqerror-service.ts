@@ -1,18 +1,18 @@
 import {IDlqErrorService} from "./dlqerror-service.interface";
 import {SQSRecord} from "aws-lambda";
-import {DocumentClient, ScanOutput} from "aws-sdk/clients/dynamodb";
 import {inject, injectable} from "inversify";
-import {IDynamoDBClient} from "../../infrastructure/interfaces/dynamodb-client.interface";
 import TYPES from "../../infrastructure/types";
+import {IAwsDynamoDBClient} from "../../infrastructure/interfaces/aws-dynamodb-client.interface";
+import {PutCommandInput, ScanCommandInput, ScanCommandOutput, UpdateCommandInput} from "@aws-sdk/lib-dynamodb";
 
 @injectable()
 export class DlqErrorService implements IDlqErrorService {
 
-  private ddbClient: IDynamoDBClient;
+  private ddbClient: IAwsDynamoDBClient;
   private readonly dlqErrorTableName = process.env.DLQ_ERROR_TABLE_NAME || '';
   private readonly dlqErrorCountTableName = process.env.DLQ_ERROR_COUNT_TABLE_NAME || '';
 
-  constructor(@inject(TYPES.IDynamoDBClient) ddbClient: IDynamoDBClient) {
+  constructor(@inject(TYPES.IAwsDynamoDBClient) ddbClient: IAwsDynamoDBClient) {
     this.ddbClient = ddbClient;
   }
 
@@ -24,7 +24,7 @@ export class DlqErrorService implements IDlqErrorService {
     console.debug(payload.detail);
     console.debug('MessageId', rec.messageId);
     console.debug('Source', rec.eventSourceARN);
-    console.debug('DlqNAme', dlqName);
+    console.debug('DlqName', dlqName);
     console.debug('Attributes', JSON.stringify(rec.attributes));
     console.debug('MessageAttributes', JSON.stringify(rec.messageAttributes));
 
@@ -46,7 +46,7 @@ export class DlqErrorService implements IDlqErrorService {
     console.info('payload', dto);
     console.log('Pending implementation');
 
-    const params: DocumentClient.PutItemInput = {
+    const params: PutCommandInput = {
       TableName: this.dlqErrorTableName,
       Item: dto,
       ReturnValues: 'ALL_OLD',
@@ -60,7 +60,7 @@ export class DlqErrorService implements IDlqErrorService {
   async persistErrorCounts(dlqCounts: any) {
     console.info('Entered persistErrorCounts');
     for(const k in dlqCounts) {
-      const params: DocumentClient.UpdateItemInput = {
+      const params: UpdateCommandInput = {
         TableName: this.dlqErrorCountTableName,
         Key: {dlqName: dlqCounts[k]},
         UpdateExpression: 'ADD itemCount :val',
@@ -72,9 +72,9 @@ export class DlqErrorService implements IDlqErrorService {
     }
   }
 
-  async getErrorCounts(): Promise<ScanOutput> {
+  async getErrorCounts(): Promise<ScanCommandOutput> {
     console.info('Entered getErrorCounts');
-    const params: DocumentClient.ScanInput = {
+    const params: ScanCommandInput = {
       TableName: this.dlqErrorCountTableName,
     };
     const res = await this.ddbClient.scan(params);
@@ -82,9 +82,9 @@ export class DlqErrorService implements IDlqErrorService {
     return res;
   }
 
-  async getErrors(dlqName: string): Promise<ScanOutput> {
+  async getErrors(dlqName: string): Promise<ScanCommandOutput> {
     console.info('Entered getErrorCounts');
-    const params: DocumentClient.ScanInput = {
+    const params: ScanCommandInput = {
       TableName: this.dlqErrorTableName,
       FilterExpression: 'dlqName = :dlqName',
       ExpressionAttributeValues: {':dlqName': dlqName},

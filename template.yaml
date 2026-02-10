@@ -16,14 +16,18 @@ Parameters:
   Route53AppDomainName:
     Type: String
 
-  SecKmsKeysCFName:
-    Type: String
-    Default: tbs-sec-kms-prod
-
   PersistErrorReservedConcurrency:
     Type: String
     Description: Populated DDb from DLQs. Allow setting to 0 if too many!
     Default: 1
+
+  ReceiveAlarmsReservedConcurrency:
+    Type: String
+    Default: 4
+
+  GetAlarmsReservedConcurrency:
+    Type: String
+    Default: 4
 
   AppLoggingLevel:
     Type: String
@@ -35,9 +39,9 @@ Parameters:
     AllowedValues: [DEBUG, INFO, WARN]
     Default: INFO
 
-  TbsAppReportsCFStackName:
+  SreMonitoringCFStackName:
     Type: String
-    Default: tbs-app-reports-prod
+    Default: tbs-sre-monitoring-dev
 
   AllowedCorsDomains:
     Type: String
@@ -138,6 +142,24 @@ Resources:
         LambdaFunctionParameters:
           InvocationType: FIRE_AND_FORGET
 
+  AlarmTable:
+    Type: AWS::DynamoDB::Table
+    #    DeletionPolicy: Retain
+    #    UpdateReplacePolicy: Retain
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: "alarmName"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "alarmName"
+          KeyType: "HASH"
+      BillingMode: PAY_PER_REQUEST
+      #      ProvisionedThroughput:
+      #        ReadCapacityUnits: 1
+      #        WriteCapacityUnits: 1
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -176,10 +198,7 @@ Resources:
                 Resource:
                   - !GetAtt DlqErrorTable.Arn
                   - !GetAtt DlqErrorCountTable.Arn
-              - Effect: Allow
-                Action: kms:Decrypt
-                Resource:
-                  Fn::ImportValue: !Sub ${SecKmsKeysCFName}:InternalKmsKey:Arn
+                  - !GetAtt AlarmTable.Arn
 
 
   PersistDlqErrorFunction:
@@ -211,6 +230,8 @@ Resources:
         Sourcemap: true
         EntryPoints:
           - src/application/event-handlers/receive-lambdadlq-errors/index.ts
+        External:
+          - "@aws-sdk/*"
 
   PersistDlqErrorFunctionLogs:
     Type: AWS::Logs::LogGroup
@@ -218,14 +239,6 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-PersistDlqErrorFunction"
       RetentionInDays: 30
 
-  # This list is expected to grow - how to make this dynamic for scale?
-#  ReportsFunctionDlqEventSourceMapping:
-#    Type: AWS::Lambda::EventSourceMapping
-#    Properties:
-#      BatchSize: 1
-#      EventSourceArn:
-#        Fn::ImportValue: !Sub ${TbsAppReportsCFStackName}:UserOrderUpsertedEventDLQ:Arn
-#      FunctionName: !Ref PersistDlqErrorFunction
 
   SaveDlqErrorCountFunction:
     Type: AWS::Serverless::Function
@@ -256,6 +269,8 @@ Resources:
         Sourcemap: true
         EntryPoints:
           - src/application/event-handlers/save-lambdadlq-errorcount/index.ts
+        External:
+          - "@aws-sdk/*"
 
   SaveDlqErrorCountFunctionLogs:
     Type: AWS::Logs::LogGroup
@@ -292,6 +307,8 @@ Resources:
         Sourcemap: true
         EntryPoints:
           - src/application/command-handlers/get-lambdadlq-errorcounts/index.ts
+        External:
+          - "@aws-sdk/*"
 
   GetDlqErrorCountsFunctionLogs:
     Type: AWS::Logs::LogGroup
@@ -328,12 +345,106 @@ Resources:
         Sourcemap: true
         EntryPoints:
           - src/application/command-handlers/get-lambdadlq-errors/index.ts
+        External:
+          - "@aws-sdk/*"
 
   GetDlqErrorsFunctionLogs:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-GetDlqErrorsFunction"
       RetentionInDays: 30
+
+  ReceiveAlarmsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: index.handler
+      Runtime: nodejs22.x
+      MemorySize: 512
+      Timeout: 10
+      Description: Receive alarms from SNS
+      Tracing: Active
+      ReservedConcurrentExecutions: !Sub ${ReceiveAlarmsReservedConcurrency}
+      LoggingConfig:
+        LogGroup: !Ref ReceiveAlarmsFunctionLogs
+        LogFormat: JSON
+        ApplicationLogLevel: !Ref AppLoggingLevel
+        SystemLogLevel: !Ref SystemLogLevel
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          DDB_ALARM_TABLE_NAME: !Ref AlarmTable
+    Metadata: # Manage esbuild properties
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Target: "es2020"
+        Sourcemap: true
+        EntryPoints:
+          - src/application/event-handlers/receive-alarms/index.ts
+        External:
+          - "@aws-sdk/*"
+
+  ReceiveAlarmsFunctionLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-ReceiveAlarmsFunction"
+      RetentionInDays: 30
+
+  GetAlarmsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: index.handler
+      Runtime: nodejs22.x
+      MemorySize: 512
+      Timeout: 10
+      Description: Get alarms from SNS
+      Tracing: Active
+      ReservedConcurrentExecutions: !Sub ${GetAlarmsReservedConcurrency}
+      LoggingConfig:
+        LogGroup: !Ref GetAlarmsFunctionLogs
+        LogFormat: JSON
+        ApplicationLogLevel: !Ref AppLoggingLevel
+        SystemLogLevel: !Ref SystemLogLevel
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          DDB_ALARM_TABLE_NAME: !Ref AlarmTable
+          ALLOWED_CORS_DOMAINS: !Ref AllowedCorsDomains
+    Metadata: # Manage esbuild properties
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Target: "es2020"
+        Sourcemap: true
+        EntryPoints:
+          - src/application/command-handlers/get-alarms/index.ts
+        External:
+          - "@aws-sdk/*"
+
+  GetAlarmsFunctionLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-GetAlarmsFunction"
+      RetentionInDays: 30
+
+  ErrorsSNSSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: lambda
+      TopicArn:
+        Fn::ImportValue: !Sub ${SreMonitoringCFStackName}:ErrorSNSTopic:Arn
+      Endpoint: !GetAtt ReceiveAlarmsFunction.Arn
+
+  ErrorsSNSInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ReceiveAlarmsFunction
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn:
+        Fn::ImportValue: !Sub ${SreMonitoringCFStackName}:ErrorSNSTopic:Arn
 
   CWLogGroupApiGwAccessLogs:
     Type: AWS::Logs::LogGroup
@@ -355,6 +466,15 @@ Resources:
     Properties:
       Action: "lambda:InvokeFunction"
       FunctionName: !Ref "GetDlqErrorsFunction"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SreErrorApi}/*"
+      SourceAccount: !Sub ${AWS::AccountId}
+
+  GetAlarmsFunctionApiGatewayInvoke:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !Ref "GetAlarmsFunction"
       Principal: "apigateway.amazonaws.com"
       SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SreErrorApi}/*"
       SourceAccount: !Sub ${AWS::AccountId}
@@ -392,6 +512,70 @@ Resources:
           title: !Sub "${AWS::StackName}-api"
           version: "2021-06-10T02:04:23Z"
         paths:
+          /alarms:
+            get:
+              security:
+                - DevopsToolkitUser: [ ]
+              produces:
+                - "application/json"
+              responses:
+                "200":
+                  description: "200 response"
+                  headers:
+                    Strict-Transport-Security:
+                      schema:
+                        type: "string"
+                    Access-Control-Allow-Origin:
+                      schema:
+                        type: "string"
+                  content: { }
+              x-amazon-apigateway-integration:
+                httpMethod: "POST"
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetAlarmsFunction.Arn}/invocations"
+                responses:
+                  default:
+                    statusCode: "200"
+                    responseParameters:
+                      method.response.header.Strict-Transport-Security: "'max-age=31536000; includeSubdomains; preload'"
+                passthroughBehavior: "when_no_match"
+                contentHandling: "CONVERT_TO_TEXT"
+                type: "aws_proxy"
+            options:
+              consumes:
+                - "application/json"
+              produces:
+                - "application/json"
+              responses:
+                "200":
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
+                    Access-Control-Allow-Methods:
+                      type: "string"
+                    Access-Control-Allow-Headers:
+                      type: "string"
+                    Strict-Transport-Security:
+                      type: "string"
+                    X-Frame-Options:
+                      type: "string"
+                    Content-Security-Policy:
+                      type: "string"
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: "200"
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Methods: "'GET,POST,PATCH,PUT,DELETE,OPTIONS'"
+                      method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
+                      method.response.header.Strict-Transport-Security: "'max-age=31536000; includeSubdomains; preload'"
+                      method.response.header.X-Frame-Options: "'DENY'"
+                      method.response.header.Content-Security-Policy: "'default-src \"none\"; frame-ancestors \"none\"'"
+                requestTemplates:
+                  application/json: "{\"statusCode\": 200}"
+                passthroughBehavior: "when_no_match"
+                type: "mock"
+
           /dlqerrors:
             get:
               security:
