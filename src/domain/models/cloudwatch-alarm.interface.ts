@@ -13,6 +13,8 @@ export interface ICloudwatchAlarm {
   OKActions: string[];
   AlarmActions: string[];
   InsufficientDataActions: string[];
+  Priority?: number;
+  Remediation?: string;
   Trigger: {
     MetricName: string;
     Namespace: string;

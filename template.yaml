@@ -46,6 +46,10 @@ Parameters:
   AllowedCorsDomains:
     Type: String
 
+  AlarmPriorityThreshold:
+    Type: Number
+    Default: 4
+
 Resources:
 
   DynamoDbStreamEventPipeRole:
@@ -354,6 +358,12 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-GetDlqErrorsFunction"
       RetentionInDays: 30
 
+  EnrichedErrorSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${AWS::StackName}-EnrichedErrorSNSTopic
+      KmsMasterKeyId: alias/aws/sns
+
   ReceiveAlarmsFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -374,6 +384,8 @@ Resources:
       Environment:
         Variables:
           DDB_ALARM_TABLE_NAME: !Ref AlarmTable
+          ALARM_PRIORITY_THRESHOLD: !Ref AlarmPriorityThreshold
+          ENRICHED_ERROR_SNS_TOPIC_ARN: !Ref EnrichedErrorSNSTopic
     Metadata: # Manage esbuild properties
       BuildMethod: esbuild
       BuildProperties:
