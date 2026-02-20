@@ -196,6 +196,7 @@ Resources:
                 Resource: !Sub "arn:aws:sqs:*:${AWS::AccountId}:*DLQ"
               - Effect: Allow
                 Action:
+                  - dynamodb:Get*
                   - "dynamodb:Put*"
                   - "dynamodb:Scan*"
                   - "dynamodb:Update*"
@@ -203,6 +204,11 @@ Resources:
                   - !GetAtt DlqErrorTable.Arn
                   - !GetAtt DlqErrorCountTable.Arn
                   - !GetAtt AlarmTable.Arn
+              - Effect: Allow
+                Action:
+                  - "sns:Publish"
+                Resource:
+                  - !Ref EnrichedErrorSNSTopic
 
 
   PersistDlqErrorFunction:
@@ -242,6 +248,7 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-PersistDlqErrorFunction"
       RetentionInDays: 30
+      KmsKeyId: "alias/aws/logs"
 
 
   SaveDlqErrorCountFunction:
@@ -281,6 +288,7 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-SaveDlqErrorCountFunction"
       RetentionInDays: 30
+      KmsKeyId: "alias/aws/logs"
 
   GetDlqErrorCountsFunction:
     Type: AWS::Serverless::Function
@@ -319,6 +327,7 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-GetDlqErrorCountsFunction"
       RetentionInDays: 30
+      KmsKeyId: "alias/aws/logs"
 
   GetDlqErrorsFunction:
     Type: AWS::Serverless::Function
@@ -357,6 +366,7 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-GetDlqErrorsFunction"
       RetentionInDays: 30
+      KmsKeyId: "alias/aws/logs"
 
   EnrichedErrorSNSTopic:
     Type: AWS::SNS::Topic
@@ -386,6 +396,7 @@ Resources:
           DDB_ALARM_TABLE_NAME: !Ref AlarmTable
           ALARM_PRIORITY_THRESHOLD: !Ref AlarmPriorityThreshold
           ENRICHED_ERROR_SNS_TOPIC_ARN: !Ref EnrichedErrorSNSTopic
+          APPLICATION_ERROR_CONFIG_TABLE_NAME: 'TBD'
     Metadata: # Manage esbuild properties
       BuildMethod: esbuild
       BuildProperties:
@@ -402,6 +413,46 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-ReceiveAlarmsFunction"
       RetentionInDays: 30
+      KmsKeyId: "alias/aws/logs"
+
+  UpdateAlarmFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: index.handler
+      Runtime: nodejs22.x
+      MemorySize: 512
+      Timeout: 10
+      Description: Update alarm via toolkit
+      Tracing: Active
+      ReservedConcurrentExecutions: !Sub ${GetAlarmsReservedConcurrency}
+      LoggingConfig:
+        LogGroup: !Ref UpdateAlarmFunctionLogs
+        LogFormat: JSON
+        ApplicationLogLevel: !Ref AppLoggingLevel
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          DDB_ALARM_TABLE_NAME: !Ref AlarmTable
+          ALLOWED_CORS_DOMAINS: !Ref AllowedCorsDomains
+          ALARM_PRIORITY_THRESHOLD: !Ref AlarmPriorityThreshold
+    Metadata: # Manage esbuild properties
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Target: "es2020"
+        Sourcemap: true
+        EntryPoints:
+          - src/application/command-handlers/update-alarm/index.ts
+        External:
+          - "@aws-sdk/*"
+
+  UpdateAlarmFunctionLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-UpdateAlarmFunction"
+      RetentionInDays: 30
+      KmsKeyId: "alias/aws/logs"
 
   GetAlarmsFunction:
     Type: AWS::Serverless::Function
@@ -424,6 +475,7 @@ Resources:
         Variables:
           DDB_ALARM_TABLE_NAME: !Ref AlarmTable
           ALLOWED_CORS_DOMAINS: !Ref AllowedCorsDomains
+          ALARM_PRIORITY_THRESHOLD: !Ref AlarmPriorityThreshold
     Metadata: # Manage esbuild properties
       BuildMethod: esbuild
       BuildProperties:
@@ -440,6 +492,7 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-GetAlarmsFunction"
       RetentionInDays: 30
+      KmsKeyId: "alias/aws/logs"
 
   ErrorsSNSSubscription:
     Type: AWS::SNS::Subscription
@@ -463,6 +516,7 @@ Resources:
     Properties:
       LogGroupName: !Join ["", ["API-Gateway-Access-Logs_", !Sub "${AWS::StackName}"]]
       RetentionInDays: 365
+      KmsKeyId: "alias/aws/logs"
 
   GetDlqErrorCountsFunctionApiGatewayInvoke:
     Type: "AWS::Lambda::Permission"
@@ -487,6 +541,15 @@ Resources:
     Properties:
       Action: "lambda:InvokeFunction"
       FunctionName: !Ref "GetAlarmsFunction"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SreErrorApi}/*"
+      SourceAccount: !Sub ${AWS::AccountId}
+
+  UpdateAlarmFunctionApiGatewayInvoke:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !Ref "UpdateAlarmFunction"
       Principal: "apigateway.amazonaws.com"
       SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SreErrorApi}/*"
       SourceAccount: !Sub ${AWS::AccountId}
@@ -544,6 +607,70 @@ Resources:
               x-amazon-apigateway-integration:
                 httpMethod: "POST"
                 uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetAlarmsFunction.Arn}/invocations"
+                responses:
+                  default:
+                    statusCode: "200"
+                    responseParameters:
+                      method.response.header.Strict-Transport-Security: "'max-age=31536000; includeSubdomains; preload'"
+                passthroughBehavior: "when_no_match"
+                contentHandling: "CONVERT_TO_TEXT"
+                type: "aws_proxy"
+            options:
+              consumes:
+                - "application/json"
+              produces:
+                - "application/json"
+              responses:
+                "200":
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
+                    Access-Control-Allow-Methods:
+                      type: "string"
+                    Access-Control-Allow-Headers:
+                      type: "string"
+                    Strict-Transport-Security:
+                      type: "string"
+                    X-Frame-Options:
+                      type: "string"
+                    Content-Security-Policy:
+                      type: "string"
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: "200"
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Methods: "'GET,POST,PATCH,PUT,DELETE,OPTIONS'"
+                      method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
+                      method.response.header.Strict-Transport-Security: "'max-age=31536000; includeSubdomains; preload'"
+                      method.response.header.X-Frame-Options: "'DENY'"
+                      method.response.header.Content-Security-Policy: "'default-src \"none\"; frame-ancestors \"none\"'"
+                requestTemplates:
+                  application/json: "{\"statusCode\": 200}"
+                passthroughBehavior: "when_no_match"
+                type: "mock"
+
+          /alarms/{id}:
+            put:
+              security:
+                - DevopsToolkitUser: [ ]
+              produces:
+                - "application/json"
+              responses:
+                "200":
+                  description: "200 response"
+                  headers:
+                    Strict-Transport-Security:
+                      schema:
+                        type: "string"
+                    Access-Control-Allow-Origin:
+                      schema:
+                        type: "string"
+                  content: { }
+              x-amazon-apigateway-integration:
+                httpMethod: "POST"
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UpdateAlarmFunction.Arn}/invocations"
                 responses:
                   default:
                     statusCode: "200"
@@ -748,6 +875,7 @@ Resources:
     Properties:
       LogGroupName: !Sub API-Gateway-Execution-Logs_${SreErrorApi}/Prod
       RetentionInDays: 30
+      KmsKeyId: "alias/aws/logs"
 
   ApiBasePathMappingv2:
     Type: AWS::ApiGatewayV2::ApiMapping

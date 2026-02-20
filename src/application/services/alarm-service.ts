@@ -3,7 +3,8 @@ import TYPES from "../../infrastructure/types";
 import {IAlarmService} from "./alarm-service.interface";
 import {ICloudwatchAlarm} from "../../domain/models/cloudwatch-alarm.interface";
 import { IAwsDynamoDBClient } from '../../infrastructure/interfaces/aws-dynamodb-client.interface';
-import {GetCommandInput, PutCommandInput, ScanCommandInput} from '@aws-sdk/lib-dynamodb';
+import { GetCommandInput, PutCommandInput, ScanCommandInput, UpdateCommandInput } from '@aws-sdk/lib-dynamodb';
+import { IAwsSNSClient } from '../../infrastructure/interfaces/aws-sns-client.interface';
 
 @injectable()
 export class AlarmService implements IAlarmService {
@@ -12,9 +13,35 @@ export class AlarmService implements IAlarmService {
 
   constructor(@inject(TYPES.IAwsDynamoDBClient) private ddbClient: IAwsDynamoDBClient,
               @inject(TYPES.AlarmTableName) private alarmTableName: string,
+              // @inject(TYPES.ApplicationErrorConfigTableName) private appErrorConfigTableName: string,
+              @inject(TYPES.IAwsSNSClient) private snsClient: IAwsSNSClient,
               @inject(TYPES.EnrichedErrorSNSTopicArn) private enrichedErrorSNSTopicArn: string,
               @inject(TYPES.AlarmPriorityThreshold) alarmPriorityThreshold: string) {
     this.alarmPriorityThreshold = Number(alarmPriorityThreshold);
+  }
+
+  /**
+   * Update from toolkit
+   * @param alarm
+   */
+  async updateAlarm(a: any) {
+    console.info('payload: ', a);
+
+    const params: UpdateCommandInput = {
+      TableName: this.alarmTableName,
+      Key: { alarmName: a.alarmName },
+      UpdateExpression: "set alarmDescription = :alarmDescription, priority = :priority, remediation = :remediation, lastUpdatedAt = :lastUpdatedAt" ,
+      ExpressionAttributeValues: {
+        ":alarmDescription": a.alarmDescription,
+        ":priority": a.priority,
+        ":remediation": a.remediation,
+        ":lastUpdatedAt": new Date().toISOString(),
+      },
+      ReturnValues: 'ALL_NEW',
+    };
+
+    const res = await this.ddbClient.update(params);
+    console.debug('Updated alarm details in ddb', res)
   }
 
   async persistAlarm(a: ICloudwatchAlarm) {
@@ -29,11 +56,14 @@ export class AlarmService implements IAlarmService {
     }
 
     const getRes = await this.ddbClient.get(getParams);
-    const existingAlarm = getRes.Item as ICloudwatchAlarm || undefined;
+    console.log('getRes:', getRes);
+    const existingAlarm = getRes.Item;
+    console.log('existingAlarm:', existingAlarm);
     if(existingAlarm) {
-      a.AlarmDescription = existingAlarm.AlarmDescription;
-      a.Priority = existingAlarm.Priority;
-      a.Remediation = existingAlarm.Remediation;
+      console.info('Enriching alarm...')
+      a.AlarmDescription = existingAlarm.alarmDescription;
+      a.Priority = existingAlarm.priority;
+      a.Remediation = existingAlarm.remediation;
     }
     else {
       const tokens = a.AlarmName.split('-');
@@ -45,6 +75,7 @@ export class AlarmService implements IAlarmService {
         application: applicationName,
         alarmDescription: a.AlarmDescription,
         priority: 0,
+        remediation: '',
         trigger:
             {
               metricName: a.Trigger.MetricName,
@@ -65,10 +96,38 @@ export class AlarmService implements IAlarmService {
       };
 
       const res = await this.ddbClient.put(params);
+      console.debug('Added alarm details in ddb', res)
+
+      // TODO - application config table needs to be available. Move to here?
+      //Also define applicationErrorConfig record for toolkit
+      // const appConfig: IApplicationErrorConfig = {
+      //   ApplicationId: applicationName,
+      //   Region: process.env.AWS_REGION || '',
+      //   Description: "TBD"
+      // }
+      //
+      // const appParams: PutCommandInput = {
+      //   TableName: this.appErrorConfigTableName,
+      //   Item: appConfig,
+      //   ConditionExpression: "attribute_not_exists(ApplicationId)",
+      //   ReturnValues: 'ALL_OLD',
+      // };
+      //
+      // const appRes = await this.ddbClient.put(appParams);
+      // console.debug('Added app details in ddb', appRes)
+
     }
 
-    return res;
-
+    // Now publish if priority >= threshold
+    if(a.Priority || 5 >= this.alarmPriorityThreshold) {
+      console.info('Publishing alarm...', a);
+      const snsParams = {
+        TopicArn: this.enrichedErrorSNSTopicArn,
+        Message: JSON.stringify(a)
+      }
+      const publishRes = await this.snsClient.publish(snsParams);
+      console.debug(publishRes);
+    }
   };
 
   async getAlarms(): Promise<any> {
