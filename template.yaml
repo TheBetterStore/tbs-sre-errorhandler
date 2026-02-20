@@ -248,8 +248,6 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-PersistDlqErrorFunction"
       RetentionInDays: 30
-      KmsKeyId: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/logs"
-
 
   SaveDlqErrorCountFunction:
     Type: AWS::Serverless::Function
@@ -288,7 +286,6 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-SaveDlqErrorCountFunction"
       RetentionInDays: 30
-      KmsKeyId: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/logs"
 
   GetDlqErrorCountsFunction:
     Type: AWS::Serverless::Function
@@ -327,7 +324,6 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-GetDlqErrorCountsFunction"
       RetentionInDays: 30
-      KmsKeyId: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/logs"
 
   GetDlqErrorsFunction:
     Type: AWS::Serverless::Function
@@ -366,7 +362,6 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-GetDlqErrorsFunction"
       RetentionInDays: 30
-      KmsKeyId: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/logs"
 
   EnrichedErrorSNSTopic:
     Type: AWS::SNS::Topic
@@ -413,7 +408,6 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-ReceiveAlarmsFunction"
       RetentionInDays: 30
-      KmsKeyId: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/logs"
 
   UpdateAlarmFunction:
     Type: AWS::Serverless::Function
@@ -452,7 +446,6 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-UpdateAlarmFunction"
       RetentionInDays: 30
-      KmsKeyId: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/logs"
 
   GetAlarmsFunction:
     Type: AWS::Serverless::Function
@@ -492,7 +485,6 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-GetAlarmsFunction"
       RetentionInDays: 30
-      KmsKeyId: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/logs"
 
   ErrorsSNSSubscription:
     Type: AWS::SNS::Subscription
@@ -516,7 +508,6 @@ Resources:
     Properties:
       LogGroupName: !Join ["", ["API-Gateway-Access-Logs_", !Sub "${AWS::StackName}"]]
       RetentionInDays: 365
-      KmsKeyId: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/logs"
 
   GetDlqErrorCountsFunctionApiGatewayInvoke:
     Type: "AWS::Lambda::Permission"
@@ -875,7 +866,6 @@ Resources:
     Properties:
       LogGroupName: !Sub API-Gateway-Execution-Logs_${SreErrorApi}/Prod
       RetentionInDays: 30
-      KmsKeyId: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/logs"
 
   ApiBasePathMappingv2:
     Type: AWS::ApiGatewayV2::ApiMapping
